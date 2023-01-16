@@ -1119,12 +1119,6 @@ Definition asr (w : n.-word) k := mkword n (Z.shiftr (srepr w) (Z.of_nat k)).
 
 Notation asl := lsl (only parsing).
 
-Definition rotl (w : n.-word) k :=
-  t2w [tuple wbit w ((i + (n - k %% n)) %% n) | i < n].
-
-Definition rotr (w : n.-word) k :=
-  t2w [tuple wbit w ((i + k) %% n) | i < n].
-
 Lemma lslE (w : n.-word) k :
   lsl w k = t2w [tuple (k <= i) && wbit w (i - k) | i < n].
 Proof.
@@ -1250,11 +1244,59 @@ move=> lt_ji; rewrite asrE (wbit_t2wFE F) {}/F addnC; case: (ltnP j n).
 Qed.
 End WordShift.
 
+(* ==================================================================== *)
+Section WordRotation.
+Context (n : nat).
+
+Definition rotr (w : n.-word) k :=
+  t2w [tuple wbit w ((i + k) %% n) | i < n].
+
+Definition rotl (w : n.-word) k :=
+  t2w [tuple wbit w ((i + (n - k %% n)) %% n) | i < n].
+
+Lemma wbit_rotr (w : n.-word) k i : wbit (rotr w k) i = (i < n) && wbit w ((i + k) %% n).
+Proof.
+  rewrite/rotr.
+  pose F j := wbit w ((j + k) %% n).
+  by rewrite (wbit_t2wFE F).
+Qed.
+
+Lemma wbit_rotl (w : n.-word) k i : wbit (rotl w k) i = (i < n) && wbit w ((i + (n - k %% n)) %% n).
+Proof.
+  rewrite/rotr.
+  pose F j := wbit w ((j + (n - k %% n)) %% n).
+  by rewrite (wbit_t2wFE F).
+Qed.
+
+Lemma rotr0 (w : n.-word) : rotr w 0 = w.
+Proof.
+  apply/eqP/eq_from_wbit => j.
+  rewrite wbit_rotr.
+  case (ltnP j n) => ?.
+  + by rewrite addn0 modn_small.
+  + by rewrite [wbit _ j]wbit_word_ovf.
+Qed.
+
+Lemma rotl0 (w : n.-word) : rotl w 0 = w.
+Proof.
+  apply/eqP/eq_from_wbit => j.
+  rewrite wbit_rotl.
+  case (ltnP j n) => ?.
+  + by rewrite mod0n subn0 -modnDmr modnn addn0 modn_small.
+  + by rewrite [wbit _ j]wbit_word_ovf.
+Qed.
+End WordRotation.
+
 (* -------------------------------------------------------------------- *)
 Section SubWord.
 Context {n : nat}.
 
 Definition subword (i l : nat) (w : n.-word) := mkword l (lsr w i).
+
+Fixpoint wcat_r (s : seq n.-word) : Z :=
+  if s is w :: s then
+    Z.lor (urepr w) (Z.shiftl (wcat_r s) n)
+  else 0%Z.
 
 Lemma subwordE i l w : subword i l w =
   t2w [tuple wbit w (j + i) | j < l].
@@ -1267,11 +1309,6 @@ move=> le_nj; rewrite nth_default ?size_tuple // -tnth_nth.
 rewrite tnth_map tnth_ord_tuple wbit_word_ovf //.
 by rewrite (leq_trans le_nj) // leq_addr.
 Qed.
-
-Fixpoint wcat_r (s : seq n.-word) : Z :=
-  if s is w :: s then
-    Z.lor (urepr w) (Z.shiftl (wcat_r s) n)
-  else 0%Z.
 
 Lemma wcat_rE (s : seq n.-word) : wcat_r s =
   (\sum_(i < size s) 2%:R ^+ (n * i) * urepr s`_i)%R.
@@ -1374,7 +1411,20 @@ Proof.
 apply/eqP/eq_from_wbit => i; rewrite wcat_wbitE wbit_t2wE.
 by rewrite -tnth_nth tnth_map tnth_ord_tuple.
 Qed.
+
+Lemma wbit_subword {m} i j (w : n.-word) :
+  wbit (subword i m w) j = (j < m) && wbit w (j + i).
+Proof.
+  rewrite subwordE.
+  pose F j := wbit w (j + i).
+  by rewrite (wbit_t2wFE F).
+Qed.
 End SubWord.
+(* -------------------------------------------------------------------- *)
+
+Section WSplitn.
+Definition wsplitn {n p} (w : (n * p).-word) :=
+  [tuple subword (i * n) n w | i < p].
 
 Lemma wcat_subwordK {n p} (w : (n * p).-word) :
   wcat [tuple subword (i * n) n w | i < p] = w.
@@ -1389,3 +1439,40 @@ rewrite subwordE wbit_t2wE; have hE: i %% n < n.
 rewrite -(tnth_nth _ _ (Ordinal hE)) tnth_map.
 by rewrite tnth_ord_tuple /= addnC -divn_eq.
 Qed.
+
+Lemma wcat_eq {n p} a t :
+  (forall (i : 'I_p), subword (i * n) n a = tnth t i) -> a = wcat t.
+Proof.
+  intros.
+  rewrite -[a]wcat_subwordK.
+  apply f_equal. apply eq_from_tnth.
+  intros i.
+  rewrite -H tnth_map tnth_ord_tuple.
+  reflexivity.
+Qed.
+
+(* NOTE this is the same as wcat_subwordK, consider removing one of them *)
+Lemma wcat_wsplitn {n p} (w : (n * p).-word) : wcat (wsplitn w) = w.
+Proof. apply wcat_subwordK. Qed.
+
+Lemma wsplitn_wcat {n p} (l : p.-tuple n.-word) : wsplitn (wcat l) = l.
+Proof.
+  apply eq_from_tnth => i.
+  rewrite tnth_mktuple.
+  apply/eqP /eq_from_wbit => j.
+  case (n =P 0).
+    move=> H. move: H j l -> => j l. by case j.
+  move=> H.
+  rewrite wbit_subword.
+  rewrite wcat_wbitE.
+  rewrite -modnDmr -modnMmr modnn muln0 mod0n addn0.
+  rewrite modn_small; auto.
+  rewrite divnDMl.
+    move: H => /eqP.
+    by rewrite lt0n.
+  rewrite divn_small; auto.
+  rewrite add0n.
+  destruct j as [j jle]; rewrite jle.
+  by rewrite (tnth_nth 0%R).
+Qed.
+End WSplitn.
